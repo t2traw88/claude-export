@@ -26,9 +26,20 @@
 <configuration scan="true">
 	<turboFilter class="net.runelite.client.util.DeduplicationFilter"/>
 
+	<!-- Terminal output for everything except Claude Export: warnings and errors only, to cut noise from other plugins -->
 	<appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+		<filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+			<level>WARN</level>
+		</filter>
 		<encoder>
 			<Pattern>%d{yyyy-MM-dd HH:mm:ss zzz} [%thread] %-5level %logger{36} - %msg%n</Pattern>
+		</encoder>
+	</appender>
+
+	<!-- Terminal output for Claude Export: every message, including debug -->
+	<appender name="PLUGIN_STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+		<encoder>
+			<Pattern>%d{HH:mm:ss} %-5level ClaudeExport - %msg%n</Pattern>
 		</encoder>
 	</appender>
 
@@ -52,5 +63,9 @@
 		<appender-ref ref="STDOUT"/>
 		<appender-ref ref="FILE"/>
 	</root>
-	<logger name="com.example" level="DEBUG" />
+	<!-- additivity="false" stops these messages also going through the filtered STDOUT above -->
+	<logger name="com.claudeexport" level="DEBUG" additivity="false">
+		<appender-ref ref="PLUGIN_STDOUT"/>
+		<appender-ref ref="FILE"/>
+	</logger>
 </configuration>
