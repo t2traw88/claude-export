@@ -24,6 +24,37 @@ class ExportState
 	Bank bank = new Bank();
 	// null (no active task) is written as "slayer": null
 	Slayer slayer;
+	// Added later; existing fields above are unchanged so older readers keep working
+	SpecialAttack specialAttack = new SpecialAttack();
+	// Region -> tier -> done, e.g. "Ardougne": {"easy": true, ...}
+	Map<String, Map<String, Boolean>> diaries = new LinkedHashMap<>();
+	// Boss name (lower case, as RuneLite stores it) -> kill count
+	Map<String, Integer> bossKc = new LinkedHashMap<>();
+	CachedItems seedVault = new CachedItems();
+	CachedItems potionStorage = new CachedItems();
+
+	static class SpecialAttack
+	{
+		// 0-100, or null if not exported
+		Integer energy;
+		List<SpecialWeapon> weapons = new ArrayList<>();
+	}
+
+	static class SpecialWeapon
+	{
+		int id;
+		String name;
+		String category;
+		// "equipped", "inventory" or "bank"
+		String where;
+	}
+
+	/** Storage that can only be read while open (seed vault, potion storage), cached like the bank. */
+	static class CachedItems
+	{
+		String lastSeen;
+		List<Item> items = new ArrayList<>();
+	}
 
 	static class PlayerInfo
 	{

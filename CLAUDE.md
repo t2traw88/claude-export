@@ -41,6 +41,8 @@ src/main/java/com/claudeexport/
   StateWriter.java                   Atomic write: temp file, then rename
   StateCollector.java                Reads game state (client thread only)
   BankCache.java                     Last-seen bank, saved to bank-cache.json
+  StorageCache.java                  Last-seen seed vault + potion storage (storage-cache.json)
+  SpecialWeapons.java                Every special-attack weapon by name (from the OSRS Wiki)
   ClaudeExportPanel.java             Side panel with "Export now"
 src/test/resources/logback-test.xml  Dev-client logging: terminal shows only our logs + warnings
 src/test/java/com/claudeexport/
@@ -55,4 +57,5 @@ src/test/java/com/claudeexport/
 - Slayer: included. Task name uses the same DB lookup as RuneLite's built-in Slayer plugin; `"slayer": null` when no task.
 - Bank cache is tied to the account hash, so another account never exports this account's bank. Placeholders and bank fillers are skipped.
 - Config toggles per section (skills, quests, equipment, inventory, bank, slayer). Off = written empty/null, never removed, so JSON keys stay stable. Bank off also stops caching.
+- Extra sections (2026-10-05, additive, schemaVersion stays 1): `specialAttack` (energy from VarPlayerID.SA_ENERGY / 10; weapons matched by name against `SpecialWeapons.java`, generated from the OSRS Wiki Special attacks page), `diaries` (VarbitID *_DIARY_*_COMPLETE; Karamja easy/med/hard use ATJUN_*_DONE, needs in-game confirmation), `bossKc` (Chat Commands plugin's rsprofile "killcount" config), `seedVault` (InventoryID.SEED_VAULT) and `potionStorage` (read like Bank Tags' PotionStorage, on the tick after the bank opens). Seed vault + potions cached in `storage-cache.json`.
 - Dev client: run `.\gradlew.bat run --args="--developer-mode"` for a quieter terminal (no `--debug`).

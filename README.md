@@ -16,6 +16,7 @@ To open the folder, press `Win + R`, paste `%USERPROFILE%\.runelite\plugin-data\
 |---|---|
 | `state.json` | The export. Each write is atomic (written to a temp file, then swapped in), so it is never half-written. |
 | `bank-cache.json` | Your last-seen bank, so the export still has it after a restart. Delete it to clear the cached bank. |
+| `storage-cache.json` | Your last-seen seed vault and potion storage, kept the same way. |
 
 ## When it exports
 
@@ -36,6 +37,12 @@ To open the folder, press `Win + R`, paste `%USERPROFILE%\.runelite\plugin-data\
 | `inventory` | Inventory items |
 | `bank` | Last-seen bank items with GE price each, `totalGeValue`, and `lastSeen` (when the bank was last open; `null` if never) |
 | `slayer` | Current task name and kills remaining, or `null` with no task |
+| `specialAttack` | Special attack energy (0-100) and every special-attack weapon you own, with where it is (`equipped`, `inventory`, `bank`) and the type of special |
+| `diaries` | Achievement diary tiers done per region, e.g. `"Ardougne": {"easy": true, "medium": false, ...}` |
+| `bossKc` | Boss kill counts recorded by RuneLite's Chat Commands plugin (it learns them from your kill count chat messages) |
+| `seedVault`, `potionStorage` | Last-seen seed vault and bank potion storage (doses), with `lastSeen` — like the bank, they refresh when you open them |
+
+The special-attack weapon list comes from the OSRS Wiki (checked October 2026): the 121 weapons and tools on the "Special attacks" page, cross-checked against the "Weapons with Special attacks" category, plus differently named versions found on each weapon's page (volcanic/frozen whips, blazing blowpipe, Dinh's blazing bulwark, Toxic staff (uncharged), and others). Tag variants like `Dragon dagger(p++)` match automatically. Leagues-only and Deadman-only weapons are left out. New weapons need adding to `SpecialWeapons.java`.
 
 The bank can only be read while it's open, so `bank` shows what it held the last time you opened it. It belongs to one account, so logging into another account won't export the first account's bank. The bank's potion storage and other storage (seed vault, POH) are not included.
 

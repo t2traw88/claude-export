@@ -1,7 +1,11 @@
 package com.claudeexport;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
@@ -17,6 +21,10 @@ import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
+import net.runelite.api.EnumComposition;
+import net.runelite.api.EnumID;
+import net.runelite.api.ScriptID;
+import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ItemManager;
 
 /**
@@ -38,7 +46,28 @@ class StateCollector
 	@Inject
 	private ClaudeExportConfig config;
 
-	ExportState collect(Player player, BankCache bankCache)
+	@Inject
+	private ConfigManager configManager;
+
+	// Diary completion flags per region: easy, medium, hard, elite.
+	// Karamja's first three tiers use older "ATJUN" varbits; the rest follow one naming pattern.
+	private static final Object[][] DIARIES = {
+		{"Ardougne", VarbitID.ARDOUGNE_DIARY_EASY_COMPLETE, VarbitID.ARDOUGNE_DIARY_MEDIUM_COMPLETE, VarbitID.ARDOUGNE_DIARY_HARD_COMPLETE, VarbitID.ARDOUGNE_DIARY_ELITE_COMPLETE},
+		{"Desert", VarbitID.DESERT_DIARY_EASY_COMPLETE, VarbitID.DESERT_DIARY_MEDIUM_COMPLETE, VarbitID.DESERT_DIARY_HARD_COMPLETE, VarbitID.DESERT_DIARY_ELITE_COMPLETE},
+		{"Falador", VarbitID.FALADOR_DIARY_EASY_COMPLETE, VarbitID.FALADOR_DIARY_MEDIUM_COMPLETE, VarbitID.FALADOR_DIARY_HARD_COMPLETE, VarbitID.FALADOR_DIARY_ELITE_COMPLETE},
+		{"Fremennik", VarbitID.FREMENNIK_DIARY_EASY_COMPLETE, VarbitID.FREMENNIK_DIARY_MEDIUM_COMPLETE, VarbitID.FREMENNIK_DIARY_HARD_COMPLETE, VarbitID.FREMENNIK_DIARY_ELITE_COMPLETE},
+		{"Kandarin", VarbitID.KANDARIN_DIARY_EASY_COMPLETE, VarbitID.KANDARIN_DIARY_MEDIUM_COMPLETE, VarbitID.KANDARIN_DIARY_HARD_COMPLETE, VarbitID.KANDARIN_DIARY_ELITE_COMPLETE},
+		{"Karamja", VarbitID.ATJUN_EASY_DONE, VarbitID.ATJUN_MED_DONE, VarbitID.ATJUN_HARD_DONE, VarbitID.KARAMJA_DIARY_ELITE_COMPLETE},
+		{"Kourend & Kebos", VarbitID.KOUREND_DIARY_EASY_COMPLETE, VarbitID.KOUREND_DIARY_MEDIUM_COMPLETE, VarbitID.KOUREND_DIARY_HARD_COMPLETE, VarbitID.KOUREND_DIARY_ELITE_COMPLETE},
+		{"Lumbridge & Draynor", VarbitID.LUMBRIDGE_DIARY_EASY_COMPLETE, VarbitID.LUMBRIDGE_DIARY_MEDIUM_COMPLETE, VarbitID.LUMBRIDGE_DIARY_HARD_COMPLETE, VarbitID.LUMBRIDGE_DIARY_ELITE_COMPLETE},
+		{"Morytania", VarbitID.MORYTANIA_DIARY_EASY_COMPLETE, VarbitID.MORYTANIA_DIARY_MEDIUM_COMPLETE, VarbitID.MORYTANIA_DIARY_HARD_COMPLETE, VarbitID.MORYTANIA_DIARY_ELITE_COMPLETE},
+		{"Varrock", VarbitID.VARROCK_DIARY_EASY_COMPLETE, VarbitID.VARROCK_DIARY_MEDIUM_COMPLETE, VarbitID.VARROCK_DIARY_HARD_COMPLETE, VarbitID.VARROCK_DIARY_ELITE_COMPLETE},
+		{"Western Provinces", VarbitID.WESTERN_DIARY_EASY_COMPLETE, VarbitID.WESTERN_DIARY_MEDIUM_COMPLETE, VarbitID.WESTERN_DIARY_HARD_COMPLETE, VarbitID.WESTERN_DIARY_ELITE_COMPLETE},
+		{"Wilderness", VarbitID.WILDERNESS_DIARY_EASY_COMPLETE, VarbitID.WILDERNESS_DIARY_MEDIUM_COMPLETE, VarbitID.WILDERNESS_DIARY_HARD_COMPLETE, VarbitID.WILDERNESS_DIARY_ELITE_COMPLETE},
+	};
+	private static final String[] TIERS = {"easy", "medium", "hard", "elite"};
+
+	ExportState collect(Player player, BankCache bankCache, StorageCache storageCache)
 	{
 		ExportState state = new ExportState();
 		state.exportedAt = Instant.now().toString();
@@ -87,6 +116,23 @@ class StateCollector
 		if (config.exportSlayer())
 		{
 			state.slayer = collectSlayer();
+		}
+		if (config.exportSpecials())
+		{
+			collectSpecials(state.specialAttack, bankCache);
+		}
+		if (config.exportDiaries())
+		{
+			collectDiaries(state.diaries);
+		}
+		if (config.exportBossKc())
+		{
+			collectBossKc(state.bossKc);
+		}
+		if (config.exportStorage() && storageCache != null && storageCache.accountHash == client.getAccountHash())
+		{
+			copyCached(state.seedVault, storageCache.seedVaultSeen, storageCache.seedVault);
+			copyCached(state.potionStorage, storageCache.potionsSeen, storageCache.potions);
 		}
 		return state;
 	}
@@ -234,6 +280,151 @@ class StateCollector
 			log.debug("Could not read slayer task", e);
 			return null;
 		}
+	}
+
+	/** Spec energy plus every special-attack weapon found in equipment, inventory and the cached bank. */
+	private void collectSpecials(ExportState.SpecialAttack out, BankCache bankCache)
+	{
+		// The varp stores energy x10 (0-1000)
+		out.energy = client.getVarpValue(VarPlayerID.SA_ENERGY) / 10;
+		addSpecials(out, client.getItemContainer(InventoryID.WORN), "equipped");
+		addSpecials(out, client.getItemContainer(InventoryID.INV), "inventory");
+		if (bankCache != null && bankCache.accountHash == client.getAccountHash())
+		{
+			for (BankCache.Entry e : bankCache.items)
+			{
+				addSpecial(out, e.id, e.name, "bank");
+			}
+		}
+	}
+
+	private void addSpecials(ExportState.SpecialAttack out, ItemContainer container, String where)
+	{
+		if (container == null)
+		{
+			return;
+		}
+		for (Item item : container.getItems())
+		{
+			if (item.getId() >= 0 && item.getQuantity() > 0)
+			{
+				addSpecial(out, item.getId(), itemName(item.getId()), where);
+			}
+		}
+	}
+
+	private void addSpecial(ExportState.SpecialAttack out, int id, String name, String where)
+	{
+		String category = SpecialWeapons.category(name);
+		if (category == null)
+		{
+			return;
+		}
+		ExportState.SpecialWeapon w = new ExportState.SpecialWeapon();
+		w.id = id;
+		w.name = name;
+		w.category = category;
+		w.where = where;
+		out.weapons.add(w);
+	}
+
+	private void collectDiaries(Map<String, Map<String, Boolean>> out)
+	{
+		for (Object[] row : DIARIES)
+		{
+			Map<String, Boolean> tiers = new LinkedHashMap<>();
+			for (int i = 0; i < TIERS.length; i++)
+			{
+				tiers.put(TIERS[i], client.getVarbitValue((Integer) row[i + 1]) > 0);
+			}
+			out.put((String) row[0], tiers);
+		}
+	}
+
+	/** Kill counts that RuneLite's Chat Commands plugin saved for this account (from KC chat messages). */
+	private void collectBossKc(Map<String, Integer> out)
+	{
+		String profile = configManager.getRSProfileKey();
+		if (profile == null)
+		{
+			return;
+		}
+		List<String> bosses = new ArrayList<>(configManager.getRSProfileConfigurationKeys("killcount", profile, ""));
+		Collections.sort(bosses);
+		for (String boss : bosses)
+		{
+			Integer kc = configManager.getRSProfileConfiguration("killcount", boss, Integer.class);
+			if (kc != null && kc > 0)
+			{
+				out.put(boss, kc);
+			}
+		}
+	}
+
+	private static void copyCached(ExportState.CachedItems out, String seen, List<BankCache.Entry> items)
+	{
+		out.lastSeen = seen;
+		for (BankCache.Entry e : items)
+		{
+			ExportState.Item i = new ExportState.Item();
+			i.id = e.id;
+			i.name = e.name;
+			i.qty = e.qty;
+			out.items.add(i);
+		}
+	}
+
+	/** New storage cache with the seed vault replaced by what's in the open vault now. */
+	StorageCache captureSeedVault(ItemContainer vault, StorageCache prev)
+	{
+		StorageCache c = prev == null ? new StorageCache().copyFor(client.getAccountHash()) : prev.copyFor(client.getAccountHash());
+		c.seedVaultSeen = Instant.now().toString();
+		c.seedVault = new ArrayList<>();
+		for (Item item : vault.getItems())
+		{
+			if (item.getId() < 0 || item.getQuantity() <= 0)
+			{
+				continue;
+			}
+			BankCache.Entry e = new BankCache.Entry();
+			e.id = item.getId();
+			e.name = itemName(item.getId());
+			e.qty = item.getQuantity();
+			c.seedVault.add(e);
+		}
+		return c;
+	}
+
+	/**
+	 * New storage cache with potion storage replaced, read the same way RuneLite's Bank Tags plugin
+	 * does (game enums + the potion store's own scripts). Only valid while the bank is open.
+	 */
+	StorageCache capturePotions(StorageCache prev)
+	{
+		StorageCache c = prev == null ? new StorageCache().copyFor(client.getAccountHash()) : prev.copyFor(client.getAccountHash());
+		c.potionsSeen = Instant.now().toString();
+		c.potions = new ArrayList<>();
+		for (int enumId : new int[]{EnumID.POTIONSTORE_POTIONS, EnumID.POTIONSTORE_UNFINISHED_POTIONS})
+		{
+			for (int potionEnumId : client.getEnum(enumId).getIntVals())
+			{
+				client.runScript(ScriptID.POTIONSTORE_DOSES, potionEnumId);
+				int doses = client.getIntStack()[0];
+				if (doses <= 0)
+				{
+					continue;
+				}
+				EnumComposition potion = client.getEnum(potionEnumId);
+				int oneDoseId = potion.getIntValue(1);
+				BankCache.Entry e = new BankCache.Entry();
+				e.id = oneDoseId;
+				// Name without the "(1)" dose marker, e.g. "Prayer potion"
+				e.name = itemName(oneDoseId).replaceAll("\\(\\d\\)$", "").trim();
+				e.qty = doses;
+				c.potions.add(e);
+			}
+		}
+		return c;
 	}
 
 	private String itemName(int itemId)

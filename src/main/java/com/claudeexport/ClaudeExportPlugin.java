@@ -86,6 +86,10 @@ public class ClaudeExportPlugin extends Plugin
 	// Set from the client thread and from the background load, so marked volatile.
 	// The object itself is never changed after creation; it's only swapped for a new one.
 	private volatile BankCache bankCache;
+	private volatile StorageCache storageCache;
+	private boolean storageCacheDirty;
+	// Potion storage is read on the tick after the bank opens (scripts can't run inside an item event)
+	private boolean potionsPending;
 
 	@Override
 	protected void startUp() throws Exception
@@ -104,7 +108,11 @@ public class ClaudeExportPlugin extends Plugin
 
 		bankCache = null;
 		bankCacheDirty = false;
+		storageCache = null;
+		storageCacheDirty = false;
+		potionsPending = false;
 		executor.execute(this::loadBankCache);
+		executor.execute(this::loadStorageCache);
 
 		// If the plugin is turned on while already logged in, export right away
 		dirty = client.getGameState() == GameState.LOGGED_IN;
@@ -169,6 +177,24 @@ public class ClaudeExportPlugin extends Plugin
 			{
 				log.warn("Claude Export: could not read the bank", e);
 			}
+			potionsPending = config.exportStorage();
+		}
+		else if (id == InventoryID.SEED_VAULT)
+		{
+			if (!config.exportStorage())
+			{
+				return;
+			}
+			try
+			{
+				storageCache = collector.captureSeedVault(event.getItemContainer(), storageCache);
+				storageCacheDirty = true;
+				dirty = true;
+			}
+			catch (RuntimeException e)
+			{
+				log.warn("Claude Export: could not read the seed vault", e);
+			}
 		}
 		else if (id == InventoryID.INV || id == InventoryID.WORN)
 		{
@@ -205,6 +231,20 @@ public class ClaudeExportPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick event)
 	{
+		if (potionsPending)
+		{
+			potionsPending = false;
+			try
+			{
+				storageCache = collector.capturePotions(storageCache);
+				storageCacheDirty = true;
+				dirty = true;
+			}
+			catch (RuntimeException e)
+			{
+				log.warn("Claude Export: could not read potion storage", e);
+			}
+		}
 		if (dirty && System.currentTimeMillis() - lastExportMs >= MIN_WRITE_INTERVAL_MS)
 		{
 			exportNow();
@@ -242,7 +282,7 @@ public class ClaudeExportPlugin extends Plugin
 		ExportState state;
 		try
 		{
-			state = collector.collect(player, bankCache);
+			state = collector.collect(player, bankCache, storageCache);
 		}
 		catch (RuntimeException e)
 		{
@@ -253,12 +293,14 @@ public class ClaudeExportPlugin extends Plugin
 		}
 		BankCache cacheToSave = bankCacheDirty ? bankCache : null;
 		bankCacheDirty = false;
+		StorageCache storageToSave = storageCacheDirty ? storageCache : null;
+		storageCacheDirty = false;
 
-		executor.execute(() -> writeFiles(state, cacheToSave));
+		executor.execute(() -> writeFiles(state, cacheToSave, storageToSave));
 	}
 
 	/** Runs on the background executor. Errors are logged, never thrown, so the client can't crash. */
-	private void writeFiles(ExportState state, BankCache cacheToSave)
+	private void writeFiles(ExportState state, BankCache cacheToSave, StorageCache storageToSave)
 	{
 		try
 		{
@@ -268,6 +310,10 @@ public class ClaudeExportPlugin extends Plugin
 			{
 				StateWriter.writeAtomically(dir, BankCache.FILE, gson.toJson(cacheToSave));
 			}
+			if (storageToSave != null)
+			{
+				StateWriter.writeAtomically(dir, StorageCache.FILE, gson.toJson(storageToSave));
+			}
 			log.debug("Wrote {}", STATE_FILE);
 			setPanelStatus("Last export: " + LocalTime.now().format(TIME));
 		}
@@ -275,6 +321,33 @@ public class ClaudeExportPlugin extends Plugin
 		{
 			log.warn("Claude Export: could not write {}", STATE_FILE, e);
 			setPanelStatus("Export failed, see client log");
+		}
+	}
+
+	/** Runs on the background executor at startup: restores seed vault + potion storage from the last session. */
+	private void loadStorageCache()
+	{
+		try
+		{
+			Filepath file = getPluginDirectory().joinSegment(StorageCache.FILE);
+			if (!file.exists())
+			{
+				return;
+			}
+			try (Reader reader = file.openReader())
+			{
+				StorageCache loaded = gson.fromJson(reader, StorageCache.class);
+				// Only use it if nothing newer was captured while we were loading
+				if (loaded != null && storageCache == null)
+				{
+					storageCache = loaded;
+				}
+			}
+		}
+		catch (IOException | RuntimeException e)
+		{
+			// A damaged file just means starting empty; it refills next time you open the vault or bank
+			log.warn("Claude Export: could not read {}", StorageCache.FILE, e);
 		}
 	}
 
